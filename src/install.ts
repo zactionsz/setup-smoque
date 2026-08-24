@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { launcherName } from './contracts'
@@ -24,6 +25,13 @@ export type RunCommand = (
   environment: NodeJS.ProcessEnv
 ) => void
 
+interface NpmInvocation {
+  args: string[]
+  command: string
+}
+
+type LocateWindowsNpm = () => string
+
 export async function installPackage(
   archive: string,
   installRoot: string,
@@ -31,14 +39,15 @@ export async function installPackage(
   runnerTemp: string,
   runCommand: RunCommand = run
 ): Promise<InstallResult> {
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  const npm = resolveNpmInvocation()
   const environment = {
     ...process.env,
     npm_config_cache: path.join(runnerTemp, 'setup-smoque-npm-cache')
   }
   runCommand(
-    npm,
+    npm.command,
     [
+      ...npm.args,
       'install',
       '--prefix',
       installRoot,
@@ -86,6 +95,14 @@ export async function installPackage(
   return { binDirectory, launcherPath }
 }
 
+export function resolveNpmInvocation(
+  platform: NodeJS.Platform = process.platform,
+  locateWindowsNpm: LocateWindowsNpm = locateWindowsNpmCli
+): NpmInvocation {
+  if (platform !== 'win32') return { args: [], command: 'npm' }
+  return { args: [locateWindowsNpm()], command: process.execPath }
+}
+
 function assertNoRuntimeDependencies(metadata: PackageMetadata): void {
   for (const [field, dependencies] of [
     ['dependencies', metadata.dependencies],
@@ -101,6 +118,24 @@ function assertNoRuntimeDependencies(metadata: PackageMetadata): void {
 async function requireRegularFile(file: string): Promise<void> {
   const metadata = await stat(file)
   if (!metadata.isFile()) throw new Error(`${file} is not a regular file`)
+}
+
+function locateWindowsNpmCli(): string {
+  const result = spawnSync('where.exe', ['npm.cmd'], {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    timeout: COMMAND_TIMEOUT_MS,
+    windowsHide: true
+  })
+  if (result.error || result.status !== 0) {
+    throw new Error('Unable to locate npm.cmd on the Windows runner PATH')
+  }
+
+  for (const command of result.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)) {
+    const cli = path.join(path.dirname(command), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    if (existsSync(cli)) return cli
+  }
+  throw new Error('Unable to locate npm-cli.js beside npm.cmd on the Windows runner PATH')
 }
 
 function run(command: string, args: string[], environment: NodeJS.ProcessEnv): void {

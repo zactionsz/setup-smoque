@@ -300,18 +300,20 @@ function escapeWorkflowCommand(message) {
 
 // src/install.ts
 var import_node_child_process = require("node:child_process");
+var import_node_fs4 = require("node:fs");
 var import_promises5 = require("node:fs/promises");
 var import_node_path4 = __toESM(require("node:path"));
 var COMMAND_TIMEOUT_MS = 6e4;
 async function installPackage(archive, installRoot, version, runnerTemp, runCommand = run) {
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  const npm = resolveNpmInvocation();
   const environment = {
     ...process.env,
     npm_config_cache: import_node_path4.default.join(runnerTemp, "setup-smoque-npm-cache")
   };
   runCommand(
-    npm,
+    npm.command,
     [
+      ...npm.args,
       "install",
       "--prefix",
       installRoot,
@@ -354,6 +356,10 @@ async function installPackage(archive, installRoot, version, runnerTemp, runComm
   await requireRegularFile(launcherPath);
   return { binDirectory, launcherPath };
 }
+function resolveNpmInvocation(platform = process.platform, locateWindowsNpm = locateWindowsNpmCli) {
+  if (platform !== "win32") return { args: [], command: "npm" };
+  return { args: [locateWindowsNpm()], command: process.execPath };
+}
 function assertNoRuntimeDependencies(metadata) {
   for (const [field, dependencies] of [
     ["dependencies", metadata.dependencies],
@@ -368,6 +374,22 @@ function assertNoRuntimeDependencies(metadata) {
 async function requireRegularFile(file) {
   const metadata = await (0, import_promises5.stat)(file);
   if (!metadata.isFile()) throw new Error(`${file} is not a regular file`);
+}
+function locateWindowsNpmCli() {
+  const result = (0, import_node_child_process.spawnSync)("where.exe", ["npm.cmd"], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+    timeout: COMMAND_TIMEOUT_MS,
+    windowsHide: true
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error("Unable to locate npm.cmd on the Windows runner PATH");
+  }
+  for (const command of result.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)) {
+    const cli = import_node_path4.default.join(import_node_path4.default.dirname(command), "node_modules", "npm", "bin", "npm-cli.js");
+    if ((0, import_node_fs4.existsSync)(cli)) return cli;
+  }
+  throw new Error("Unable to locate npm-cli.js beside npm.cmd on the Windows runner PATH");
 }
 function run(command, args, environment) {
   const result = (0, import_node_child_process.spawnSync)(command, args, {

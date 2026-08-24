@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { installPackage, type RunCommand } from '../src/install'
+import { installPackage, resolveNpmInvocation, type RunCommand } from '../src/install'
 
 test('installs a self-contained package with scripts and network disabled', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'setup-smoque-install-'))
@@ -46,6 +46,13 @@ test('rejects a release with runtime dependencies', async () => {
   } finally {
     await rm(root, { force: true, recursive: true })
   }
+})
+
+test('invokes the Windows npm CLI through the Action Node runtime', () => {
+  const invocation = resolveNpmInvocation('win32', () => 'C:\\node\\npm-cli.js')
+
+  assert.equal(invocation.command, process.execPath)
+  assert.deepEqual(invocation.args, ['C:\\node\\npm-cli.js'])
 })
 
 function writeInstalledFixture(installRoot: string, metadata: object): void {
