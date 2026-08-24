@@ -1,0 +1,84 @@
+name: Setup contract
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Unit and contract tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install development dependencies
+        run: npm ci
+
+      - name: Audit dependency graph
+        run: npm audit --audit-level=high
+
+      - name: Run complete local gate
+        run: npm run check
+
+  package-free:
+    name: Package-free ${{ matrix.os }}
+    needs: quality
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-15
+          - windows-2025
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Smoque
+        id: smoque
+        uses: ./
+        with:
+          version: "0.1.2"
+          sha256: "f6644336d7104c8099c42824a28dacdf402fcfe8b7a487fefc09b00b3b58d45d"
+
+      - name: Set up Smoque from verified cache
+        id: smoque-cache
+        uses: ./
+        with:
+          version: "0.1.2"
+          sha256: "f6644336d7104c8099c42824a28dacdf402fcfe8b7a487fefc09b00b3b58d45d"
+
+      - name: Verify setup outputs
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.smoque-cache.outputs.cache-hit }}
+          SMOQUE_PATH: ${{ steps.smoque-cache.outputs.path }}
+          SMOQUE_SHA256: ${{ steps.smoque.outputs.sha256 }}
+          SMOQUE_VERSION: ${{ steps.smoque.outputs.version }}
+        run: |
+          test "$SMOQUE_VERSION" = 0.1.2
+          test "$SMOQUE_SHA256" = f6644336d7104c8099c42824a28dacdf402fcfe8b7a487fefc09b00b3b58d45d
+          test "$CACHE_HIT" = true
+          node -e "const fs = require('node:fs'); if (!fs.statSync(process.env.SMOQUE_PATH).isFile()) process.exit(1)"
+          test "$(node --version)" != ""
+          test "$(smoque --version)" = 0.1.2
+
+      - name: Run consumer-owned smoke suite
+        working-directory: integration/package-free
+        run: smoque run smoke/ --ci --junit smoke-results.xml

@@ -1,0 +1,29 @@
+name: Set up Smoque
+description: Install an exact, SHA-256-pinned Smoque release
+author: zsumz
+
+inputs:
+  version:
+    description: Exact Smoque npm release version
+    required: true
+  sha256:
+    description: Expected SHA-256 digest of the published npm tarball
+    required: true
+
+outputs:
+  version:
+    description: Verified Smoque version
+  sha256:
+    description: Verified lowercase tarball SHA-256 digest
+  path:
+    description: Absolute path to the installed Smoque launcher
+  cache-hit:
+    description: Whether an existing verified tarball-cache entry was used
+
+runs:
+  using: node24
+  main: dist/index.js
+
+branding:
+  icon: wind
+  color: gray-dark
