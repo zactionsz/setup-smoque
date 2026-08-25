@@ -393,6 +393,13 @@ ${node} "${relativeCli}" %*\r
 `,
       { encoding: "utf8", flag: "wx", mode: 448 }
     );
+    const shellLauncher = import_node_path4.default.join(binDirectory, "smoque");
+    await (0, import_promises5.writeFile)(
+      shellLauncher,
+      '#!/usr/bin/env sh\nexec node "$(dirname "$0")/../node_modules/smoque/dist/cli/main.js" "$@"\n',
+      { encoding: "utf8", flag: "wx", mode: 448 }
+    );
+    await requireRegularFile(shellLauncher);
   } else {
     await (0, import_promises5.symlink)(import_node_path4.default.relative(binDirectory, cli), launcherPath, "file");
     const [resolvedLauncher, resolvedCli] = await Promise.all([

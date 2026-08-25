@@ -145,6 +145,14 @@ async function createLauncher(
       `@ECHO OFF\r\n${node} "${relativeCli}" %*\r\n`,
       { encoding: 'utf8', flag: 'wx', mode: 0o700 }
     )
+    const shellLauncher = path.join(binDirectory, 'smoque')
+    await writeFile(
+      shellLauncher,
+      '#!/usr/bin/env sh\n' +
+        'exec node "$(dirname "$0")/../node_modules/smoque/dist/cli/main.js" "$@"\n',
+      { encoding: 'utf8', flag: 'wx', mode: 0o700 }
+    )
+    await requireRegularFile(shellLauncher)
   } else {
     await symlink(path.relative(binDirectory, cli), launcherPath, 'file')
     const [resolvedLauncher, resolvedCli] = await Promise.all([
