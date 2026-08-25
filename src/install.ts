@@ -1,12 +1,13 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { readFile, stat } from 'node:fs/promises'
+import { mkdir, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { launcherName } from './contracts'
 
 export const COMMAND_TIMEOUT_MS = 60_000
 
 interface PackageMetadata {
+  bin?: string | Record<string, string>
   dependencies?: Record<string, string>
   name?: string
   optionalDependencies?: Record<string, string>
@@ -52,6 +53,7 @@ export async function installPackage(
       '--prefix',
       installRoot,
       '--ignore-scripts',
+      '--bin-links=false',
       '--no-save',
       '--package-lock=false',
       '--audit=false',
@@ -72,6 +74,7 @@ export async function installPackage(
         `${metadata.version ?? '<missing>'}, expected smoque@${version}`
     )
   }
+  assertExpectedLauncher(metadata)
   assertNoRuntimeDependencies(metadata)
 
   const cli = path.join(packageRoot, 'dist', 'cli', 'main.js')
@@ -89,9 +92,7 @@ export async function installPackage(
     throw new Error(`Installed Smoque did not report the expected version ${version}`)
   }
 
-  const binDirectory = path.join(installRoot, 'node_modules', '.bin')
-  const launcherPath = path.join(binDirectory, launcherName())
-  await requireRegularFile(launcherPath)
+  const { binDirectory, launcherPath } = await createLauncher(installRoot, cli)
   return { binDirectory, launcherPath }
 }
 
@@ -113,6 +114,63 @@ function assertNoRuntimeDependencies(metadata: PackageMetadata): void {
       throw new Error(`smoque declares ${field}; setup-smoque requires a self-contained release`)
     }
   }
+}
+
+function assertExpectedLauncher(metadata: PackageMetadata): void {
+  const launcher =
+    typeof metadata.bin === 'object' && metadata.bin !== null
+      ? metadata.bin.smoque
+      : undefined
+  if (launcher !== 'dist/cli/main.js') {
+    throw new Error(
+      `Installed package bin.smoque was ${launcher ?? '<missing>'}, ` +
+        'expected dist/cli/main.js'
+    )
+  }
+}
+
+async function createLauncher(
+  installRoot: string,
+  cli: string
+): Promise<InstallResult> {
+  const binDirectory = path.join(installRoot, 'bin')
+  const launcherPath = path.join(binDirectory, launcherName())
+  await mkdir(binDirectory)
+
+  if (process.platform === 'win32') {
+    const node = quoteBatchPath(process.execPath)
+    const relativeCli = '%~dp0..\\node_modules\\smoque\\dist\\cli\\main.js'
+    await writeFile(
+      launcherPath,
+      `@ECHO OFF\r\n${node} "${relativeCli}" %*\r\n`,
+      { encoding: 'utf8', flag: 'wx', mode: 0o700 }
+    )
+    const shellLauncher = path.join(binDirectory, 'smoque')
+    await writeFile(
+      shellLauncher,
+      '#!/usr/bin/env sh\n' +
+        'exec node "$(dirname "$0")/../node_modules/smoque/dist/cli/main.js" "$@"\n',
+      { encoding: 'utf8', flag: 'wx', mode: 0o700 }
+    )
+    await requireRegularFile(shellLauncher)
+  } else {
+    await symlink(path.relative(binDirectory, cli), launcherPath, 'file')
+    const [resolvedLauncher, resolvedCli] = await Promise.all([
+      realpath(launcherPath),
+      realpath(cli)
+    ])
+    if (resolvedLauncher !== resolvedCli) {
+      throw new Error('Installed Smoque launcher does not resolve to the verified CLI')
+    }
+  }
+
+  await requireRegularFile(launcherPath)
+  return { binDirectory, launcherPath }
+}
+
+function quoteBatchPath(value: string): string {
+  if (/\r|\n|"/u.test(value)) throw new Error('Unable to encode the Action Node path')
+  return `"${value.replaceAll('%', '%%')}"`
 }
 
 async function requireRegularFile(file: string): Promise<void> {
