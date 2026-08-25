@@ -336,25 +336,40 @@ async function installPackage(archive, installRoot, version, runnerTemp, runComm
       `Installed package identity was ${metadata.name ?? "<missing>"}@${metadata.version ?? "<missing>"}, expected smoque@${version}`
     );
   }
+  assertExpectedLauncher(metadata);
   assertNoRuntimeDependencies(metadata);
   const cli = import_node_path4.default.join(packageRoot, "dist", "cli", "main.js");
   await requireRegularFile(cli);
-  const versionResult = (0, import_node_child_process.spawnSync)(process.execPath, [cli, "--version"], {
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-    timeout: COMMAND_TIMEOUT_MS,
-    windowsHide: true
-  });
-  if (versionResult.error) {
-    throw new Error(`Unable to run installed Smoque: ${versionResult.error.message}`);
-  }
-  if (versionResult.status !== 0 || versionResult.stdout.trim() !== version) {
-    throw new Error(`Installed Smoque did not report the expected version ${version}`);
-  }
   const binDirectory = import_node_path4.default.join(installRoot, "node_modules", ".bin");
   const launcherPath = import_node_path4.default.join(binDirectory, launcherName());
   await requireRegularFile(launcherPath);
+  await assertLauncherResolvesToCli(launcherPath, cli);
+  const versionResult = runLauncherVersion(launcherPath);
+  if (versionResult.error) {
+    throw new Error(`Unable to run installed Smoque launcher: ${versionResult.error.message}`);
+  }
+  if (versionResult.status !== 0 || versionResult.stdout.trim() !== version) {
+    throw new Error(`Installed Smoque launcher did not report the expected version ${version}`);
+  }
   return { binDirectory, launcherPath };
+}
+function runLauncherVersion(launcherPath) {
+  const environment = {
+    ...process.env,
+    PATH: [import_node_path4.default.dirname(process.execPath), process.env.PATH].filter(Boolean).join(import_node_path4.default.delimiter)
+  };
+  const options = {
+    encoding: "utf8",
+    env: environment,
+    maxBuffer: 1024 * 1024,
+    timeout: COMMAND_TIMEOUT_MS,
+    windowsHide: true
+  };
+  if (process.platform !== "win32") {
+    return (0, import_node_child_process.spawnSync)(process.execPath, [launcherPath, "--version"], options);
+  }
+  const shell = process.env.ComSpec ?? "cmd.exe";
+  return (0, import_node_child_process.spawnSync)(shell, ["/d", "/s", "/c", `""${launcherPath}" --version"`], options);
 }
 function resolveNpmInvocation(platform = process.platform, locateWindowsNpm = locateWindowsNpmCli) {
   if (platform !== "win32") return { args: [], command: "npm" };
@@ -369,6 +384,24 @@ function assertNoRuntimeDependencies(metadata) {
     if (dependencies && Object.keys(dependencies).length > 0) {
       throw new Error(`smoque declares ${field}; setup-smoque requires a self-contained release`);
     }
+  }
+}
+function assertExpectedLauncher(metadata) {
+  const launcher = typeof metadata.bin === "object" && metadata.bin !== null ? metadata.bin.smoque : void 0;
+  if (launcher !== "dist/cli/main.js") {
+    throw new Error(
+      `Installed package bin.smoque was ${launcher ?? "<missing>"}, expected dist/cli/main.js`
+    );
+  }
+}
+async function assertLauncherResolvesToCli(launcherPath, cli) {
+  if (process.platform === "win32") return;
+  const [resolvedLauncher, resolvedCli] = await Promise.all([
+    (0, import_promises5.realpath)(launcherPath),
+    (0, import_promises5.realpath)(cli)
+  ]);
+  if (resolvedLauncher !== resolvedCli) {
+    throw new Error("Installed Smoque launcher does not resolve to the verified CLI");
   }
 }
 async function requireRegularFile(file) {

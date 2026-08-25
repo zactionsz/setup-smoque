@@ -2,9 +2,10 @@
 
 ## Supported versions
 
-Only the latest commit on `main` is supported before the first stable Action
-release. Consumers should pin the Action by full commit SHA and pin the Smoque
-package with both an exact version and its published tarball SHA-256 digest.
+Before the first stable Action release, the supported revision is the qualified
+full commit SHA in the README usage example. Consumers should pin that Action
+revision and pin the Smoque package with both an exact version and its published
+tarball SHA-256 digest.
 
 ## Reporting a vulnerability
 
