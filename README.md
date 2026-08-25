@@ -10,7 +10,7 @@ reporting, and every other Smoque operation.
 steps:
   - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-  - uses: zactionsz/setup-smoque@af5e0479c60a7c9957e0da2de8311f030c0f9871
+  - uses: zactionsz/setup-smoque@91389c294e30e11c62adbc7257186cf108ded493
     with:
       version: "0.1.2"
       sha256: "f6644336d7104c8099c42824a28dacdf402fcfe8b7a487fefc09b00b3b58d45d"
