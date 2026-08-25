@@ -1,6 +1,6 @@
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { mkdir, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { launcherName } from './contracts'
 
@@ -53,6 +53,7 @@ export async function installPackage(
       '--prefix',
       installRoot,
       '--ignore-scripts',
+      '--bin-links=false',
       '--no-save',
       '--package-lock=false',
       '--audit=false',
@@ -78,40 +79,21 @@ export async function installPackage(
 
   const cli = path.join(packageRoot, 'dist', 'cli', 'main.js')
   await requireRegularFile(cli)
-  const binDirectory = path.join(installRoot, 'node_modules', '.bin')
-  const launcherPath = path.join(binDirectory, launcherName())
-  await requireRegularFile(launcherPath)
-  await assertLauncherResolvesToCli(launcherPath, cli)
-
-  const versionResult = runLauncherVersion(launcherPath)
-  if (versionResult.error) {
-    throw new Error(`Unable to run installed Smoque launcher: ${versionResult.error.message}`)
-  }
-  if (versionResult.status !== 0 || versionResult.stdout.trim() !== version) {
-    throw new Error(`Installed Smoque launcher did not report the expected version ${version}`)
-  }
-
-  return { binDirectory, launcherPath }
-}
-
-function runLauncherVersion(launcherPath: string): SpawnSyncReturns<string> {
-  const environment = {
-    ...process.env,
-    PATH: [path.dirname(process.execPath), process.env.PATH].filter(Boolean).join(path.delimiter)
-  }
-  const options = {
+  const versionResult = spawnSync(process.execPath, [cli, '--version'], {
     encoding: 'utf8',
-    env: environment,
     maxBuffer: 1024 * 1024,
     timeout: COMMAND_TIMEOUT_MS,
     windowsHide: true
-  } as const
-
-  if (process.platform !== 'win32') {
-    return spawnSync(process.execPath, [launcherPath, '--version'], options)
+  })
+  if (versionResult.error) {
+    throw new Error(`Unable to run installed Smoque: ${versionResult.error.message}`)
   }
-  const shell = process.env.ComSpec ?? 'cmd.exe'
-  return spawnSync(shell, ['/d', '/s', '/c', `""${launcherPath}" --version"`], options)
+  if (versionResult.status !== 0 || versionResult.stdout.trim() !== version) {
+    throw new Error(`Installed Smoque did not report the expected version ${version}`)
+  }
+
+  const { binDirectory, launcherPath } = await createLauncher(installRoot, cli)
+  return { binDirectory, launcherPath }
 }
 
 export function resolveNpmInvocation(
@@ -147,15 +129,40 @@ function assertExpectedLauncher(metadata: PackageMetadata): void {
   }
 }
 
-async function assertLauncherResolvesToCli(launcherPath: string, cli: string): Promise<void> {
-  if (process.platform === 'win32') return
-  const [resolvedLauncher, resolvedCli] = await Promise.all([
-    realpath(launcherPath),
-    realpath(cli)
-  ])
-  if (resolvedLauncher !== resolvedCli) {
-    throw new Error('Installed Smoque launcher does not resolve to the verified CLI')
+async function createLauncher(
+  installRoot: string,
+  cli: string
+): Promise<InstallResult> {
+  const binDirectory = path.join(installRoot, 'bin')
+  const launcherPath = path.join(binDirectory, launcherName())
+  await mkdir(binDirectory)
+
+  if (process.platform === 'win32') {
+    const node = quoteBatchPath(process.execPath)
+    const relativeCli = '%~dp0..\\node_modules\\smoque\\dist\\cli\\main.js'
+    await writeFile(
+      launcherPath,
+      `@ECHO OFF\r\n${node} "${relativeCli}" %*\r\n`,
+      { encoding: 'utf8', flag: 'wx', mode: 0o700 }
+    )
+  } else {
+    await symlink(path.relative(binDirectory, cli), launcherPath, 'file')
+    const [resolvedLauncher, resolvedCli] = await Promise.all([
+      realpath(launcherPath),
+      realpath(cli)
+    ])
+    if (resolvedLauncher !== resolvedCli) {
+      throw new Error('Installed Smoque launcher does not resolve to the verified CLI')
+    }
   }
+
+  await requireRegularFile(launcherPath)
+  return { binDirectory, launcherPath }
+}
+
+function quoteBatchPath(value: string): string {
+  if (/\r|\n|"/u.test(value)) throw new Error('Unable to encode the Action Node path')
+  return `"${value.replaceAll('%', '%%')}"`
 }
 
 async function requireRegularFile(file: string): Promise<void> {

@@ -318,6 +318,7 @@ async function installPackage(archive, installRoot, version, runnerTemp, runComm
       "--prefix",
       installRoot,
       "--ignore-scripts",
+      "--bin-links=false",
       "--no-save",
       "--package-lock=false",
       "--audit=false",
@@ -340,36 +341,20 @@ async function installPackage(archive, installRoot, version, runnerTemp, runComm
   assertNoRuntimeDependencies(metadata);
   const cli = import_node_path4.default.join(packageRoot, "dist", "cli", "main.js");
   await requireRegularFile(cli);
-  const binDirectory = import_node_path4.default.join(installRoot, "node_modules", ".bin");
-  const launcherPath = import_node_path4.default.join(binDirectory, launcherName());
-  await requireRegularFile(launcherPath);
-  await assertLauncherResolvesToCli(launcherPath, cli);
-  const versionResult = runLauncherVersion(launcherPath);
-  if (versionResult.error) {
-    throw new Error(`Unable to run installed Smoque launcher: ${versionResult.error.message}`);
-  }
-  if (versionResult.status !== 0 || versionResult.stdout.trim() !== version) {
-    throw new Error(`Installed Smoque launcher did not report the expected version ${version}`);
-  }
-  return { binDirectory, launcherPath };
-}
-function runLauncherVersion(launcherPath) {
-  const environment = {
-    ...process.env,
-    PATH: [import_node_path4.default.dirname(process.execPath), process.env.PATH].filter(Boolean).join(import_node_path4.default.delimiter)
-  };
-  const options = {
+  const versionResult = (0, import_node_child_process.spawnSync)(process.execPath, [cli, "--version"], {
     encoding: "utf8",
-    env: environment,
     maxBuffer: 1024 * 1024,
     timeout: COMMAND_TIMEOUT_MS,
     windowsHide: true
-  };
-  if (process.platform !== "win32") {
-    return (0, import_node_child_process.spawnSync)(process.execPath, [launcherPath, "--version"], options);
+  });
+  if (versionResult.error) {
+    throw new Error(`Unable to run installed Smoque: ${versionResult.error.message}`);
   }
-  const shell = process.env.ComSpec ?? "cmd.exe";
-  return (0, import_node_child_process.spawnSync)(shell, ["/d", "/s", "/c", `""${launcherPath}" --version"`], options);
+  if (versionResult.status !== 0 || versionResult.stdout.trim() !== version) {
+    throw new Error(`Installed Smoque did not report the expected version ${version}`);
+  }
+  const { binDirectory, launcherPath } = await createLauncher(installRoot, cli);
+  return { binDirectory, launcherPath };
 }
 function resolveNpmInvocation(platform = process.platform, locateWindowsNpm = locateWindowsNpmCli) {
   if (platform !== "win32") return { args: [], command: "npm" };
@@ -394,15 +379,36 @@ function assertExpectedLauncher(metadata) {
     );
   }
 }
-async function assertLauncherResolvesToCli(launcherPath, cli) {
-  if (process.platform === "win32") return;
-  const [resolvedLauncher, resolvedCli] = await Promise.all([
-    (0, import_promises5.realpath)(launcherPath),
-    (0, import_promises5.realpath)(cli)
-  ]);
-  if (resolvedLauncher !== resolvedCli) {
-    throw new Error("Installed Smoque launcher does not resolve to the verified CLI");
+async function createLauncher(installRoot, cli) {
+  const binDirectory = import_node_path4.default.join(installRoot, "bin");
+  const launcherPath = import_node_path4.default.join(binDirectory, launcherName());
+  await (0, import_promises5.mkdir)(binDirectory);
+  if (process.platform === "win32") {
+    const node = quoteBatchPath(process.execPath);
+    const relativeCli = "%~dp0..\\node_modules\\smoque\\dist\\cli\\main.js";
+    await (0, import_promises5.writeFile)(
+      launcherPath,
+      `@ECHO OFF\r
+${node} "${relativeCli}" %*\r
+`,
+      { encoding: "utf8", flag: "wx", mode: 448 }
+    );
+  } else {
+    await (0, import_promises5.symlink)(import_node_path4.default.relative(binDirectory, cli), launcherPath, "file");
+    const [resolvedLauncher, resolvedCli] = await Promise.all([
+      (0, import_promises5.realpath)(launcherPath),
+      (0, import_promises5.realpath)(cli)
+    ]);
+    if (resolvedLauncher !== resolvedCli) {
+      throw new Error("Installed Smoque launcher does not resolve to the verified CLI");
+    }
   }
+  await requireRegularFile(launcherPath);
+  return { binDirectory, launcherPath };
+}
+function quoteBatchPath(value) {
+  if (/\r|\n|"/u.test(value)) throw new Error("Unable to encode the Action Node path");
+  return `"${value.replaceAll("%", "%%")}"`;
 }
 async function requireRegularFile(file) {
   const metadata = await (0, import_promises5.stat)(file);
